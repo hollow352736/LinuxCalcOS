@@ -1,0 +1,51 @@
+name: Build LinuxCalc ISO
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt update && sudo apt install -y live-build
+
+      - name: Configure and Build
+        run: |
+          DIST=trixie
+          MIRROR=http://mirrors.tuna.tsinghua.edu.cn/debian
+          lb config --distribution $DIST \
+            --archive-areas "main contrib non-free non-free-firmware" \
+            --binary-images iso-hybrid \
+            --mirror-bootstrap $MIRROR \
+            --mirror-chroot $MIRROR \
+            --mirror-binary $MIRROR \
+            --debian-installer false \
+            --bootappend-live "boot=live components quiet splash"
+
+          mkdir -p config/package-lists
+          echo -e "xorg\nlightdm\nmate-desktop-environment-core\nmate-terminal\nmate-calc\nsudo" > config/package-lists/linuxcalc.list.chroot
+
+          mkdir -p config/includes.chroot/etc/lightdm
+          echo -e "[Seat:*]\nautologin-user=user\nautologin-user-timeout=0\nuser-session=mate" > config/includes.chroot/etc/lightdm/lightdm.conf
+
+          mkdir -p config/includes.chroot/etc/xdg/autostart
+          echo -e "[Desktop Entry]\nType=Application\nName=LinuxCalc\nExec=mate-calc && systemctl poweroff\nX-GNOME-Autostart-enabled=true" > config/includes.chroot/etc/xdg/autostart/linuxcalc.desktop
+
+          mkdir -p config/hooks/live
+          echo -e "#!/bin/bash\nset -e\nuseradd -m -s /bin/bash user\necho \"user:user\" | chpasswd\nusermod -aG sudo user" > config/hooks/live/01-adduser.hook.chroot
+          chmod +x config/hooks/live/01-adduser.hook.chroot
+
+          mkdir -p config/includes.chroot/etc/apt
+          echo -e "deb $MIRROR $DIST main contrib non-free non-free-firmware\ndeb-src $MIRROR $DIST main contrib non-free non-free-firmware" > config/includes.chroot/etc/apt/sources.list
+
+          sudo lb build
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linuxcalc-trixie-iso
+          path: ./live-image-amd64.hybrid.iso
