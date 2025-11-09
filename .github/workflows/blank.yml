@@ -1,4 +1,4 @@
-name: Build UbuntuCalc ISO (24.04 Slim, fixed)
+name: Build UbuntuCalc ISO (24.04 Ultra Slim)
 
 on:
   workflow_dispatch:
@@ -23,58 +23,69 @@ jobs:
           mkdir -p build/chroot
           sudo debootstrap --arch=amd64 noble build/chroot http://archive.ubuntu.com/ubuntu/
 
-          # 创建用户与基本配置
-          echo "user:x:1000:1000:user,,,:/home/user:/bin/bash" | sudo tee build/chroot/etc/passwd > /dev/null
-          echo "user:x:1000:" | sudo tee build/chroot/etc/group > /dev/null
-          echo "user:user" | sudo chroot build/chroot chpasswd
-          sudo chroot build/chroot usermod -aG sudo user
-
-          # 配置自动登录 lightdm
+          # 安装最小桌面与必要组件
           sudo chroot build/chroot bash -c '
+            export DEBIAN_FRONTEND=noninteractive
             apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-              systemd-sysv lightdm mate-desktop-environment-core mate-terminal mate-calc xorg sudo network-manager
+            apt-get install -y --no-install-recommends \
+              systemd-sysv lightdm mate-desktop-environment-core \
+              mate-terminal mate-calc xorg sudo network-manager casper
+
+            # 自动登录配置
             mkdir -p /etc/lightdm
             echo "[Seat:*]
 autologin-user=user
 autologin-user-timeout=0
 user-session=mate" > /etc/lightdm/lightdm.conf
+
+            # 自启动计算器并关机
             mkdir -p /etc/xdg/autostart
             echo "[Desktop Entry]
 Type=Application
 Name=LinuxCalc
 Exec=mate-calc && systemctl poweroff
 X-GNOME-Autostart-enabled=true" > /etc/xdg/autostart/linuxcalc.desktop
+
+            # 创建用户
+            useradd -m -s /bin/bash user
+            echo "user:user" | chpasswd
+            usermod -aG sudo user
+
+            # 清理 & 精简
             apt-get clean
+            rm -rf /usr/share/man/* /usr/share/doc/* /usr/share/locale/* /var/lib/apt/lists/*
+            find /usr/share -type f -name "*.mo" -delete
+            rm -rf /var/cache/* /var/log/*
           '
 
-      - name: Create live filesystem
+      - name: Create ultra-compressed live filesystem
         run: |
           mkdir -p build/image/{casper,boot/grub,isolinux}
-          sudo mksquashfs build/chroot build/image/casper/filesystem.squashfs -e boot
-          echo "UbuntuCalc 24.04 Slim" | sudo tee build/image/casper/README > /dev/null
+          sudo mksquashfs build/chroot build/image/casper/filesystem.squashfs \
+            -e boot -comp xz -b 1M -Xbcj x86 -Xcompression-level 9
+          echo "UbuntuCalc 24.04 Ultra Slim" | sudo tee build/image/casper/README
           (cd build/chroot && sudo find . | sudo tee ../image/casper/filesystem.manifest) || true
           echo -n $(sudo du -sx --block-size=1 build/chroot | cut -f1) | sudo tee build/image/casper/filesystem.size
 
-          # 复制内核与 initrd
+          # 拷贝内核与 initrd
           sudo cp build/chroot/boot/vmlinuz-* build/image/casper/vmlinuz || true
           sudo cp build/chroot/boot/initrd.img-* build/image/casper/initrd || true
 
-          # 创建 grub.cfg
+          # grub 启动菜单
           cat <<EOF | sudo tee build/image/boot/grub/grub.cfg
 set default=0
 set timeout=5
-menuentry "Start UbuntuCalc 24.04 Slim" {
+menuentry "Start UbuntuCalc 24.04 Ultra Slim" {
     linux /casper/vmlinuz boot=casper quiet splash ---
     initrd /casper/initrd
 }
 EOF
 
           # 生成 ISO
-          sudo grub-mkrescue -o ubuntu-calc-24.04-slim.iso build/image
+          sudo grub-mkrescue -o ubuntu-calc-24.04-ultra-slim.iso build/image
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ubuntu-calc-24.04-slim
-          path: ubuntu-calc-24.04-slim.iso
+          name: ubuntu-calc-24.04-ultra-slim
+          path: ubuntu-calc-24.04-ultra-slim.iso
