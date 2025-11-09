@@ -1,56 +1,94 @@
-name: Build LinuxCalc ISO
+name: Build UbuntuCalc ISO (24.04 Slim)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install build tools
         run: |
           sudo apt update
-          sudo apt install -y debootstrap live-build debian-archive-keyring
+          sudo apt install -y \
+            live-build debootstrap \
+            casper squashfs-tools xorriso isolinux syslinux-utils \
+            genisoimage ubuntu-keyring wget ca-certificates
 
-      - name: Configure and Build
+      - name: Configure minimal Ubuntu live system
         run: |
-          # 换成 bullseye（稳定版）或 bookworm（testing）更安全
-          DIST=bookworm
-          MIRROR=http://mirrors.tuna.tsinghua.edu.cn/debian
+          DIST=noble
+          MIRROR=http://archive.ubuntu.com/ubuntu
 
           sudo lb config \
+            --mode ubuntu \
             --distribution $DIST \
-            --archive-areas "main contrib non-free non-free-firmware" \
             --binary-images iso-hybrid \
+            --archive-areas "main restricted universe multiverse" \
             --mirror-bootstrap $MIRROR \
             --mirror-chroot $MIRROR \
             --mirror-binary $MIRROR \
             --debian-installer false \
-            --bootappend-live "boot=live components quiet splash"
+            --apt-recommends false \
+            --apt-options "--no-install-recommends" \
+            --bootappend-live "boot=live quiet splash" \
+            --firmware-binary false \
+            --firmware-chroot false
 
           mkdir -p config/package-lists
-          echo -e "xorg\nlightdm\nmate-desktop-environment-core\nmate-terminal\nmate-calc\nsudo" > config/package-lists/linuxcalc.list.chroot
+          # 最小化桌面，仅包含必要组件
+          cat <<EOF > config/package-lists/ubuntu-calc.list.chroot
+xorg
+lightdm
+mate-desktop-environment-core
+mate-terminal
+mate-calc
+sudo
+casper
+EOF
 
           mkdir -p config/includes.chroot/etc/lightdm
-          echo -e "[Seat:*]\nautologin-user=user\nautologin-user-timeout=0\nuser-session=mate" > config/includes.chroot/etc/lightdm/lightdm.conf
+          cat <<EOF > config/includes.chroot/etc/lightdm/lightdm.conf
+[Seat:*]
+autologin-user=user
+autologin-user-timeout=0
+user-session=mate
+EOF
 
           mkdir -p config/includes.chroot/etc/xdg/autostart
-          echo -e "[Desktop Entry]\nType=Application\nName=LinuxCalc\nExec=mate-calc && systemctl poweroff\nX-GNOME-Autostart-enabled=true" > config/includes.chroot/etc/xdg/autostart/linuxcalc.desktop
+          cat <<EOF > config/includes.chroot/etc/xdg/autostart/linuxcalc.desktop
+[Desktop Entry]
+Type=Application
+Name=LinuxCalc
+Exec=mate-calc && systemctl poweroff
+X-GNOME-Autostart-enabled=true
+EOF
 
           mkdir -p config/hooks/live
-          echo -e "#!/bin/bash\nset -e\nuseradd -m -s /bin/bash user\necho \"user:user\" | chpasswd\nusermod -aG sudo user" > config/hooks/live/01-adduser.hook.chroot
+          cat <<'EOF' > config/hooks/live/01-adduser.hook.chroot
+#!/bin/bash
+set -e
+useradd -m -s /bin/bash user
+echo "user:user" | chpasswd
+usermod -aG sudo user
+EOF
           chmod +x config/hooks/live/01-adduser.hook.chroot
 
           mkdir -p config/includes.chroot/etc/apt
-          echo -e "deb $MIRROR $DIST main contrib non-free non-free-firmware\ndeb-src $MIRROR $DIST main contrib non-free non-free-firmware" > config/includes.chroot/etc/apt/sources.list
+          echo "deb $MIRROR $DIST main restricted universe multiverse" > config/includes.chroot/etc/apt/sources.list
 
-          sudo lb build
+      - name: Build ISO
+        run: |
+          sudo lb build --verbose
+          # 重命名输出
+          mv live-image-amd64.hybrid.iso ubuntu-calc-24.04-slim.iso
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linuxcalc-${{ env.DIST || 'bookworm' }}-iso
-          path: ./live-image-amd64.hybrid.iso
+          name: ubuntu-calc-24.04-slim
+          path: ubuntu-calc-24.04-slim.iso
