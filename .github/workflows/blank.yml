@@ -11,13 +11,18 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt update && sudo apt install -y live-build
+        run: |
+          sudo apt update
+          sudo apt install -y debootstrap live-build debian-archive-keyring
 
       - name: Configure and Build
         run: |
-          DIST=trixie
+          # 换成 bullseye（稳定版）或 bookworm（testing）更安全
+          DIST=bookworm
           MIRROR=http://mirrors.tuna.tsinghua.edu.cn/debian
-          lb config --distribution $DIST \
+
+          sudo lb config \
+            --distribution $DIST \
             --archive-areas "main contrib non-free non-free-firmware" \
             --binary-images iso-hybrid \
             --mirror-bootstrap $MIRROR \
@@ -47,5 +52,5 @@ jobs:
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linuxcalc-trixie-iso
+          name: linuxcalc-${{ env.DIST || 'bookworm' }}-iso
           path: ./live-image-amd64.hybrid.iso
